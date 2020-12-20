@@ -13,26 +13,33 @@ exceptions = {
     'scipy': 'sci-libs/scipy',
     'tornado': 'www-servers/tornado'
 }
-renames = {
-    'async-generator': 'async_generator',
-    'jupyter-core': 'jupyter_core',
-    'jupyter-console': 'jupyter_console',
-    'jupyter-client': 'jupyter_client',
-    'matlab-kernel': 'matlab_kernel'
-}
+renames = { k:k.replace('-', '_') for k in ['async-generator',
+                                           'jupyter-core',
+                                           'jupyter-console',
+                                           'jupyter-client',
+                                           'jupyter-telemetry',
+                                           'matlab-kernel',
+                                           'prometheus-client',
+                                           ]}
+renames.update({'SQLAlchemy': 'sqlalchemy'})
+renames.update({'Jinja2': 'jinja',
+                'jinja2': 'jinja'
+                })
+
 existing_packages = set()
 missing_packages = set()
 
 def get_package_name(package):
+    package = package.replace('.', '-')
     if package in exceptions:
         return exceptions[package]
     elif package in renames:
-        return 'dev-python/' + renames[package]
-    else:
-        if not package in existing_packages:
-            print("Package '%s' does not exist" % package)
-            missing_packages.add(package)
-        return 'dev-python/' + package
+        package = renames[package]
+
+    if not package in existing_packages:
+        print("Package '%s' does not exist" % package)
+        missing_packages.add(package)
+    return 'dev-python/' + package
 
 def get_project_python_versions(project):
     classifiers = project['info']['classifiers']
@@ -50,7 +57,7 @@ def get_project_python_versions(project):
 
 def convert_dependency(depend):
     # ignore strings after ';'
-    depend = depend.split(';')[0]
+    depend = depend.split(';')[0].strip()
     # handle: package (>=version)
     match = re.match("(.+) \(>=(.+)\)", depend)
     if match:
@@ -108,7 +115,7 @@ def generate(package, args):
     resp = requests.get("https://pypi.org/pypi/{}/json".format(package))
     body = json.loads(resp.content)
 
-    package = body['info']['name']
+    package = body['info']['name'].replace('.','-')
     if package in renames:
         package = renames[package]
     versions = get_project_python_versions(body)
@@ -151,7 +158,7 @@ def generate(package, args):
     
     if args.recursive:
         for pkg in list(missing_packages):
-            if package not in existing_packages:
+            if pkg not in existing_packages:
                 generate(pkg, args)
 
 def main():
