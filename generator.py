@@ -74,7 +74,7 @@ class PyPIEbuilder():
     # useless dependencies
     use_blackhole = set(('dev',))
 
-    def __init__(self, category, repo, repoman: bool, recursive: bool, verbose: bool):
+    def __init__(self, category, repo, repoman: bool, recursive: bool, verbose: bool, get_uri_from_pypi: bool):
         """
         Input:
             category: String, the default category of the generated ebuild files
@@ -82,6 +82,7 @@ class PyPIEbuilder():
             repoman: bool, generate manifest or not
             recursive: bool, recursively generate ebuild or not
             verbose: bool
+            get_uri_from_pypi: bool
         """
         self.category = category
 
@@ -98,6 +99,8 @@ class PyPIEbuilder():
         self.recursive = recursive
         # verbose
         self.verbose = verbose
+        # whether it should use the uri provided by pypi instead Gentoo's "mirror" syntax
+        self.get_uri_from_pypi = get_uri_from_pypi
 
     def get_package_name(self, package):
         """
@@ -327,10 +330,13 @@ class PyPIEbuilder():
         body = json.loads(resp.content)
 
         #
+        pv = body['info']['version']
+        #
         pypi_id = body['info']['name']
         package = regularize_package_name(pypi_id)
         versions = self.get_project_python_versions(body)
         compat = ' '.join(['python' + version.replace('.','_') for version in versions])
+        #
         license = body['info']['license']
         if license in PyPIEbuilder.license_mapping:
             license = PyPIEbuilder.license_mapping[license]
@@ -350,7 +356,7 @@ class PyPIEbuilder():
         # dir of the project
         dir = Path(self.repo) / category / package
         # ${P}
-        path = dir / "{}-{}.ebuild".format(package, body['info']['version'])
+        path = dir / "{}-{}.ebuild".format(package, pv)
         print('Writing to', path)
         dir.mkdir(parents=True, exist_ok=True)
         # write ebuild
@@ -361,7 +367,15 @@ class PyPIEbuilder():
             content += 'PYTHON_COMPAT=( {} )\n\n'.format(compat)
             content += 'inherit distutils-r1\n\n'
             content += 'DESCRIPTION="{}"\n'.format(body['info']['summary'])
-            content += 'SRC_URI="mirror://pypi/${PN:0:1}/${PN}/${P}.tar.gz"\n'
+            src_uri = 'SRC_URI="mirror://pypi/${PN:0:1}/${PN}/${P}.tar.gz"\n'
+            if self.get_uri_from_pypi:
+                #
+                for release_body in body['releases'][pv]:
+                    if release_body['python_version'] == 'source':
+                        provided_srcuri = release_body['url']
+                        src_uri += 'SRC_URI="{}"\n'.format(provided_srcuri)
+                        break
+            content += src_uri
             content += 'HOMEPAGE="{}"\n\n'.format(body['info']['home_page'])
             content += 'LICENSE="{}"\n'.format(body['info']['license'])
             content += 'SLOT="0"\n'
@@ -395,6 +409,7 @@ class PyPIEbuilder():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--category', help='the default category', default='dev-python')
+    parser.add_argument('--get-uri-from-pypi', action='store_true', help='whether it should use the uri provided by pypi instead Gentoo\'s "mirror" syntax.')
     parser.add_argument('-r', '--repos', action='append',
         help='existing Portage repositories, do not specify it if you want it to find all repositories automatically',
         default=[])
@@ -412,7 +427,7 @@ def main():
         f.write("masters = gentoo\nauto-sync = false\n")
 
     # instantiate PyPIEbuilder
-    ebuilder = PyPIEbuilder(args.category, args.target, args.repoman, args.recursive, args.verbose)
+    ebuilder = PyPIEbuilder(args.category, args.target, args.repoman, args.recursive, args.verbose, args.get_uri_from_pypi)
 
     # parse
     if len(args.repos) == 0:
