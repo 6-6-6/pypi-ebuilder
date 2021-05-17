@@ -8,9 +8,16 @@ import glob
 from collections import defaultdict
 from pathlib import Path
 
+# TODO: set via CLI args
+DEFAULT_CATEGORY = 'dev-python'
+
+#
 supported_python_versions = ['3.6', '3.7', '3.8']
 
 # already provided by other gentoo packages
+# and thes pkgs either do not provide its pypi upstream in its metadata.xml
+#                   or has USE conditional codes
+#                   or has alternative names
 exceptions = {
     'bs4': 'dev-python/beautifulsoup:4',
     'funcsigs': '',
@@ -37,15 +44,21 @@ use_blackhole = set(('dev',))
 existing_packages = dict()
 missing_packages = set()
 
-def get_package_name(package):
-    package = package.replace('.', '-')
+def regularize_package_name(package):
+    return package.lower() \
+                  .replace('.', '-')
+
+def get_package_name(package, category):
+    gentoo_package = regularize_package_name(package)
     if package in exceptions:
         return exceptions[package]
 
-    if not package in existing_packages:
+    try:
+        category, gentoo_package = existing_packages[package]
+    except:
         print("Package '%s' does not exist" % package)
         missing_packages.add(package)
-    return 'dev-python/' + package
+    return f'{category}/{gentoo_package}'
 
 def get_project_python_versions(project):
     classifiers = project['info']['classifiers']
@@ -61,7 +74,7 @@ def get_project_python_versions(project):
         res = supported_python_versions
     return res
 
-def convert_dependency(depend):
+def convert_dependency(depend, default_category):
     # ignore strings after ';'
     depend = depend.split(';')[0].strip()
     # ignore strings after '[', e.g. horovod[torch]
@@ -71,24 +84,24 @@ def convert_dependency(depend):
     if match:
         name = match.group(1)
         version = match.group(2)
-        return '>={}-{}[${{PYTHON_USEDEP}}]'.format(get_package_name(name), version)
+        return '>={}-{}[${{PYTHON_USEDEP}}]'.format(get_package_name(name, default_category), version)
     else:
         # handle: package (==version)
         match = re.match("(.+) \(==(.+)\)", depend)
         if match:
             name = match.group(1)
             version = match.group(2)
-            return '={}-{}[${{PYTHON_USEDEP}}]'.format(get_package_name(name), version)
+            return '={}-{}[${{PYTHON_USEDEP}}]'.format(get_package_name(name, default_category), version)
         else:
             # strip all exotic (.*), e.g. (~=1-32-0), (~=3-7-4), (<2,>=1-21-1)
             match = re.match("(.+) \([^()]*\)", depend)
             if match:
                 name = match.group(1)
-                return '{}[${{PYTHON_USEDEP}}]'.format(get_package_name(name))
+                return '{}[${{PYTHON_USEDEP}}]'.format(get_package_name(name, default_category))
             else:
-                return '{}[${{PYTHON_USEDEP}}]'.format(get_package_name(depend))
+                return '{}[${{PYTHON_USEDEP}}]'.format(get_package_name(depend, default_category))
 
-def get_iuse_and_depend(project):
+def get_iuse_and_depend(project, default_category):
     requires = project['info']['requires_dist']
     simple = []
     uses = defaultdict(list)
@@ -105,16 +118,16 @@ def get_iuse_and_depend(project):
                 use = match.group(2)
                 if use in use_blackhole:
                     continue
-                uses[use].append(convert_dependency(name))
+                uses[use].append(convert_dependency(name, default_category))
             else:
                 match = re.match('(.+); python_version < "(.+)"', req)
                 if match:
                     name = match.group(1).strip()
                     if not name.startswith('backports'):
                         # we don't need backports for python3
-                        simple.append(convert_dependency(name))
+                        simple.append(convert_dependency(name, default_category))
                 else:
-                    simple.append(convert_dependency(req.strip()))
+                    simple.append(convert_dependency(req.strip(), default_category))
 
     use_res = []
     for use in uses:
@@ -149,7 +162,7 @@ def find_packages(repo):
         if match:
             pypi_id = upstream_has_pypi(xmltodict.parse(open(pkg_metadata).read()))
             if pypi_id:
-                existing_packages[pypi_id] = [match.group(1), match.group(2)]
+                existing_packages[regularize_package_name(pypi_id)] = [match.group(1), match.group(2)]
 
     print(f'Found {len(existing_packages) - len_old} packages in {repo}')
 
@@ -179,7 +192,11 @@ def generate(package, args):
     resp = requests.get("https://pypi.org/pypi/{}/json".format(package))
     body = json.loads(resp.content)
 
-    package = body['info']['name'].replace('.','-')
+    # TODO: parse it from args
+    default_category = DEFAULT_CATEGORY
+    #
+    pypi_id = body['info']['name']
+    package = regularize_package_name(pypi_id)
     versions = get_project_python_versions(body)
     compat = ' '.join(['python' + version.replace('.','_') for version in versions])
     print('Python versions', versions)
@@ -190,10 +207,13 @@ def generate(package, args):
         license = license_mapping[license]
     print('License', license)
     print('Version', body['info']['version'])
-    iuse_and_depend = get_iuse_and_depend(body)
+    iuse_and_depend = get_iuse_and_depend(body, default_category)
     print('IUSE and Depend', iuse_and_depend)
 
-    dir = Path(args.repo) / "dev-python" / package
+    # get category of the package
+    category = existing_packages.get(package, default_category)[0]
+
+    dir = Path(args.repo) / category / package
     path = dir / "{}-{}.ebuild".format(package, body['info']['version'])
     print('Writing to', path)
     dir.mkdir(parents=True, exist_ok=True)
@@ -214,14 +234,16 @@ def generate(package, args):
 
         f.write(content)
 
-    generate_metadata_if_not_exists(dir / "metadata.xml", package)
+    generate_metadata_if_not_exists(dir / "metadata.xml", pypi_id)
 
     if args.repoman:
         os.system('cd %s && repoman manifest' % (dir))
         
+    # regularize_package_name() is called before
+    # update existing_packages anyway
+    existing_packages[package] = [category, package]
     if package in missing_packages:
         missing_packages.remove(package)
-        existing_packages.add(package)
     
     if args.recursive:
         for pkg in list(missing_packages):
@@ -244,6 +266,7 @@ def main():
 
     for repo in repos:
         find_packages(portage.db[eroot]["vartree"].settings.repositories.treemap.get(repo))
+
     # setup repo structure
     metadata = Path(args.repo) / "metadata"
     metadata.mkdir(parents=True, exist_ok=True)
