@@ -1,5 +1,7 @@
 # gentoo-pypi-generator
 
+A fork of https://isrc.iscas.ac.cn/gitlab/summer2020/students/proj-2027131
+
 Generate ebuild from PyPI packages with ease.
 
 ## How to develop
