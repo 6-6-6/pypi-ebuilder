@@ -15,37 +15,11 @@ exceptions = {
     'bs4': 'dev-python/beautifulsoup:4',
     'funcsigs': '',
     'opencv-python': 'media-libs/opencv[python]',
-    'scikit-learn': 'sci-libs/scikit-learn',
-    'scipy': 'sci-libs/scipy',
     'tensorflow': 'sci-libs/tensorflow',
     'tensorflow-cpu': 'sci-libs/tensorflow',
     'tensorflow-gpu': 'sci-libs/tensorflow[gpu]',
     'torch' : 'sci-libs/pytorch',
-    'tornado': 'www-servers/tornado',
-    'urllib3': ''
 }
-
-# handle '-' and '_'
-renames = { k:k.replace('-', '_') for k in ['async-generator',
-                                           'jupyter-core',
-                                           'jupyter-console',
-                                           'jupyter-client',
-                                           'jupyter-telemetry',
-                                           'Keras-Preprocessing',
-                                           'matlab-kernel',
-                                           'mpl-axes-aligner',
-                                           'pretty-midi',
-                                           'prometheus-client',
-                                           ]}
-
-# other cases
-renames.update({'SQLAlchemy': 'sqlalchemy',
-                'Sphinx': 'sphinx',
-                'PyYAML': 'pyyaml',
-                'Jinja2': 'jinja',
-                'jinja2': 'jinja',
-                'netcdf4': 'netcdf4-python',
-                })
 
 # unneeded packages for python2 backports
 removals = [ 'backports.lzma' ]
@@ -67,8 +41,6 @@ def get_package_name(package):
     package = package.replace('.', '-')
     if package in exceptions:
         return exceptions[package]
-    elif package in renames:
-        package = renames[package]
 
     if not package in existing_packages:
         print("Package '%s' does not exist" % package)
@@ -208,8 +180,6 @@ def generate(package, args):
     body = json.loads(resp.content)
 
     package = body['info']['name'].replace('.','-')
-    if package in renames:
-        package = renames[package]
     versions = get_project_python_versions(body)
     compat = ' '.join(['python' + version.replace('.','_') for version in versions])
     print('Python versions', versions)
