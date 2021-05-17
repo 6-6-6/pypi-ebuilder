@@ -60,7 +60,7 @@ license_mapping = {
 # useless dependencies
 use_blackhole = set(('dev',))
 
-existing_packages = set()
+existing_packages = dict()
 missing_packages = set()
 
 def get_package_name(package):
@@ -150,13 +150,57 @@ def get_iuse_and_depend(project):
     iuse = 'IUSE="{}"'.format(" ".join(uses.keys()))
     return iuse + '\n' + 'RDEPEND="' + '\n\t'.join(simple + use_res) + '"'
 
-def find_packages():
-    for file in glob.glob('/var/db/repos/*/dev-python/**/*.ebuild', recursive=True):
-        match = re.match(".*dev-python/(.+)/.*ebuild", file)
-        if match:
-            existing_packages.add(match.group(1))
+# TODO: format the related code to purge this dependency
+import xmltodict
 
-    print('Found %d packages in gentoo repo' % len(existing_packages))
+def upstream_has_pypi(metadata_dict):
+    try:
+        upstream = metadata_dict['pkgmetadata']['upstream']['remote-id']
+    except:
+        return False
+    if isinstance(upstream, list):
+        for u in upstream:
+            if u['@type'] == 'pypi':
+                return u['#text']
+    else:
+        if upstream['@type'] == 'pypi':
+            return upstream['#text']
+    return False
+
+# reimplement find_package() by checking the metadata.xml of a pkg
+def find_packages(repo):
+    len_old = len(existing_packages)
+    cate_pkg_match = re.compile(f"{repo}/(.*)/(.+)/metadata.xml")
+
+    for pkg_metadata in glob.glob(f'{repo}/**/metadata.xml', recursive=True):
+        match = cate_pkg_match.match(pkg_metadata)
+        if match:
+            pypi_id = upstream_has_pypi(xmltodict.parse(open(pkg_metadata).read()))
+            if pypi_id:
+                existing_packages[pypi_id] = [match.group(1), match.group(2)]
+
+    print(f'Found {len(existing_packages) - len_old} packages in {repo}')
+
+# TODO: update maintainer
+# TODO: accept description
+def generate_metadata_if_not_exists(metadata_path, pypi_id):
+    if not metadata_path.exists():
+        metadata =  f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "http://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+  <maintainer type="person">
+    <email>someone@example.org</email>
+    <name>Pypi ebuilder</name>
+  </maintainer>
+  <longdescription lang="en">
+  there will be description later.
+</longdescription>
+  <upstream>
+    <remote-id type="pypi">{pypi_id}</remote-id>
+  </upstream>
+</pkgmetadata>
+'''
+        return open(metadata_path, 'w').write(metadata)
 
 def generate(package, args):
     print('Generating {} to {}'.format(package, args.repo))
@@ -200,6 +244,8 @@ def generate(package, args):
 
         f.write(content)
 
+    generate_metadata_if_not_exists(dir / "metadata.xml", package)
+
     if args.repoman:
         os.system('cd %s && repoman manifest' % (dir))
         
@@ -221,8 +267,13 @@ def main():
     parser.add_argument('packages', nargs='+')
     args = parser.parse_args()
 
-    find_packages()
+    # TODO: format it later
+    import portage
+    eroot = '/'
+    repos = portage.db[eroot]["vartree"].settings.repositories.prepos_order
 
+    for repo in repos:
+        find_packages(portage.db[eroot]["vartree"].settings.repositories.treemap.get(repo))
     # setup repo structure
     metadata = Path(args.repo) / "metadata"
     metadata.mkdir(parents=True, exist_ok=True)
