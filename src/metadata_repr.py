@@ -40,7 +40,8 @@ class PkgMetadata:
             else:
                 dep_str += f"\t{cate}/{pn}[${{PYTHON_USEDEP}}]\n"
             # add missing to todo list
-            if not exist and 0:
+            ## TODO:
+            if not exist:
                 t = PYPICommunicator()
                 t.test(pypi_id)
         for key, val in dep_dict.items():

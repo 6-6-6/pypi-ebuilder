@@ -58,11 +58,11 @@ class PYPIParser():
     dep_fallback = re.compile("(.+); (.+)")
     ## dep's PV patterns
     # handle: package ([<>]=version)
-    depv_normal = re.compile(r"(.+) *\(?([<>]=?) *([0-9\.\-]+)\)?")
+    depv_normal = re.compile(r"(^[ \(]+) *\(?([<>]=?) *([0-9\.\-]+)\)?")
     # handle: package ([~=]=version)
-    depv_locked = re.compile(r"(.+) *?\(?([~=])= *([0-9\.\-]+)\)?")
+    depv_locked = re.compile(r"(^[ \(]+) *?\(?([~=])= *([0-9\.\-]+)\)?")
     # handle: package (!=version)
-    depv_rej = re.compile(r"(.+) *\(?!= *([0-9\.\-]+)\)?")
+    depv_rej = re.compile(r"(^[ \(]+) *\(?!= *([0-9\.\-]+)\)?")
 
     # database got by parsing the host's portage repo
     ## static member, meant to be modified by portage_parser
@@ -122,7 +122,7 @@ class PYPIParser():
 #        simple = []
 #        uses = defaultdict(list)
         if requires == None:
-            return {}
+            return deps
         for req in requires:
             ## TODO: update it so we can do less res
             match_use = PYPIParser.dep_use.match(req)
@@ -155,10 +155,12 @@ class PYPIParser():
     @staticmethod
     def parse_single_dep(dep_string):
         # ignore strings after ';'
+        if len(dep_string.split(';')) > 1:
+            warn(f"ignoring the latter part of a conditional dep string {dep_string}")
         dep_string = dep_string.split(';')[0].strip()
         # ignore strings after '[', e.g. horovod[torch]
         if len(dep_string.split('[')) > 1:
-            warn(f"ignoring conditional dep string {dep_string}")
+            warn(f"ignoring the latter part of a conditional dep string {dep_string}")
         dep_string = dep_string.split('[')[0]
 
         # handle: package ([<>]=version)
@@ -167,7 +169,7 @@ class PYPIParser():
         match_locked = PYPIParser.depv_locked.match(dep_string)
         # handle: package (!=version)
         match_rej = PYPIParser.depv_rej.match(dep_string)
-        
+
         if match_normal:
             pypi_id = match_normal.group(1)
             specifier = match_normal.group(2)
@@ -189,7 +191,10 @@ class PYPIParser():
             version = None
         else:
             error(f"not handled dep string {dep_string}")
-            raise ValueError
+            #raise ValueError
+            pypi_id = dep_string.split(" ")[0]
+            specifier = None
+            version = None
         print(pypi_id, (specifier, version))
         return pypi_id, (specifier, version)
 
@@ -223,12 +228,17 @@ class PYPICommunicator():
     upstream_template = "https://pypi.org/pypi/{}/json"
 
     def test(self, package):
-        info(f"Retriving metadata of {package}")
+        warn(f"Retriving metadata of {package}, uri: {self.upstream_template.format(package)}")
         resp = requests.get(self.upstream_template.format(package))
         body = json.loads(resp.content)
         ###############################
         #
-        pypi_id = body["info"]["name"]
+        try:
+            pypi_id = body["info"]["name"]
+        except Exception as e:
+            print(body)
+            error(f"encountering {e} for pkg: '{package}'")
+            raise ValueError
         #
         portage_cate, portage_name, existed = PYPIParser.catepn(pypi_id)
         portage_version = PYPIParser.pv(body['info']['version'])
